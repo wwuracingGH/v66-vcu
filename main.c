@@ -15,7 +15,7 @@
 #define ROLLING_ADC_VALS  (ROLLING_ADC_FRAMES * 4)
 
 #define MIN_TORQUE_REQ      0 //do not change this. car not legally allowed to go backwards.
-#define MAX_TORQUE_REQ      100
+#define MAX_TORQUE_REQ      79
 
 #define BRAKES_THREASHOLD   500 //change this in the future
 
@@ -24,10 +24,10 @@
 #define REMAPm_M(n, min, max)   ((n) * (max - min) + (min))
 #define FABS(x)                 ((x) > 0.0f ? (x) : -(x))
 
-const uint32_t APPS1_MIN    = 1500;
-const uint32_t APPS1_MAX    = 3700;
-const uint32_t APPS2_MIN    = 400;
-const uint32_t APPS2_MAX    = 2550;
+const uint32_t APPS1_MIN    = 447;
+const uint32_t APPS1_MAX    = 1860;
+const uint32_t APPS2_MIN    = 1880;
+const uint32_t APPS2_MAX    = 3240;
 const uint32_t FBPS_MIN     = 0;
 const uint32_t FBPS_MAX     = 4092;
 const uint32_t RBPS_MIN     = 0;
@@ -132,7 +132,7 @@ uint32_t __aeabi_uidiv(uint32_t u, uint32_t v) {
 }
 
 //what gets sent to the motor controller
-MC_Command canmsg = {0, 0, 0, 0, 0, 0, 0, 0};
+MC_Command canmsg = {0, 0, 1, 0, 0, 0, 0, 0};
 
 int main(){
     //setup
@@ -193,7 +193,7 @@ void systick_handler()
     car_state.controlTimer--;
     car_state.recieveTimer--;
     car_state.inputTimer--;
-    car_state.buzzerTimer--;
+    //car_state.buzzerTimer--;
     car_state.diagTimer--;
 }
 
