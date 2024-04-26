@@ -201,19 +201,19 @@ void Control() {
     car_state.controlQue = 0;
     APPS_RollingSmooth();
     car_state.lastAPPSFault = APPS_calc(&car_state.torque_req, car_state.lastAPPSFault);
-    canmsg.inverterEnable = car_state.ready_to_drive;
     
     if(car_state.ready_to_drive)
         canmsg.torqueCommand = car_state.torque_req;
     send_CAN(MC_CANID_COMMAND, 8, (uint8_t*)&canmsg);        
     
+    canmsg.inverterEnable = car_state.ready_to_drive;
     GPIOB->ODR |= (car_state.ready_to_drive > 0) << 7;
     GPIOB->ODR &= ~((car_state.ready_to_drive == 0) << 7);
 }
 
 void Input(){
     car_state.inputQue = 0;
-    if(!(GPIOB->IDR & GPIO_IDR_1) && !car_state.ready_to_drive){ 
+    if(!(GPIOB->IDR & GPIO_IDR_1)) {
         RTD_start();
     }
 }
@@ -225,10 +225,15 @@ void send_Diagnostics(){
 }
 
 void RTD_start(){
-    if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return;   
-    car_state.buzzerTimer = 3000; //buzzer timer in ms
-    GPIOB->ODR |= GPIO_ODR_5; //buzzer
-    car_state.ready_to_drive = 1;
+    if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return;
+    if (car_state.ready_to_drive) {
+        canmsg.inverterEnable = 0;
+    } else {
+        car_state.buzzerTimer = 3000; //buzzer timer in ms
+        GPIOB->ODR |= GPIO_ODR_5; //buzzer
+        car_state.ready_to_drive = 1;
+    }
+    
 }
 
 void clock_init() //turns on hsi48 and sets as system clock
