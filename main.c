@@ -15,9 +15,9 @@
 #define ROLLING_ADC_VALS  (ROLLING_ADC_FRAMES * 4)
 
 #define MIN_TORQUE_REQ      0 //do not change this. car not legally allowed to go backwards.
-#define MAX_TORQUE_REQ      2200
+#define MAX_TORQUE_REQ      1500
 
-#define BRAKES_THREASHOLD   420 //change this in the future
+#define BRAKES_THREASHOLD   500 //change this in the future
 
 #define CONSTINV(n)             (1.0f / (float)(n)) //TODO: change all of the devisors to precomputed const values
 #define REMAP0_1(n, min, max)   ((float)(n - min) * CONSTINV(max - min))
@@ -101,7 +101,7 @@ void CAN_Init();
 void default_handler();
 void Control();
 void Fault_Clear();
-void MC_Shutup();
+void MC_Init();
 void Input();
 void send_Diagnostics();
 
@@ -141,8 +141,11 @@ uint32_t __aeabi_uidiv(uint32_t u, uint32_t v) {
 //what gets sent to the motor controller
 MC_Command canmsg = {0, 0, 1, 0, 0, 0, 0, 0};
 MC_ParameterCommand faultClearMsg = {20, 1, 0, 0, 0};
-//MC_ParameterCommand shutup = {148, 1, 0, 0b0001110011100111, 0xFFFF};
-MC_ParameterCommand shutup = {148, 1, 0, 0b1110011100111000, 0xFFFF};
+MC_ParameterCommand shutup = {148, 1, 0, 0b0001110011100111, 0xFFFF};
+//MC_ParameterCommand shutup = {148, 1, 0, 0b1110011100111000, 0xFFFF};
+MC_ParameterCommand torqueLimitMsg = {129, 1, 0, MAX_TORQUE_REQ, 0};
+MC_ParameterCommand cmdTimeoutMsg = {146, 1, 0, 1, 0};
+
 int main(){
     //setup
     clock_init();
@@ -167,7 +170,7 @@ int main(){
     SysTick_Config(48000); // 48MHZ / 48000 = 1 tick every ms
     __enable_irq(); //enable interrupts
    
-    MC_Shutup();
+    MC_Init();
     //non rt program bits
     for(;;){
         if(car_state.controlQue)      Control();
@@ -184,6 +187,10 @@ void systick_handler()
     if(car_state.controlTimer == 0){
         car_state.controlQue = 1;
         car_state.controlTimer = controlReset;
+    }
+    if(car_state.faultClearTimer == 0){
+        car_state.faultClearQueue = 1;
+        car_state.faultClearTimer = faultClearReset;
     }
     if(car_state.inputTimer == 0){
         car_state.inputQue = 1;
@@ -231,8 +238,10 @@ void Fault_Clear(){
     }
 }
 
-void MC_Shutup(){
+void MC_Init(){
     send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&shutup);
+    send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&torqueLimitMsg);
+    send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&cmdTimeoutMsg);
 }
 
 void Input(){
@@ -248,10 +257,9 @@ void send_Diagnostics(){
     send_CAN(VCU_CANID_CALIBRATION, 8, (uint8_t *)&car_state.APPSCalib.apps1);
 }
 
-//TODO: brakes for RTD
 void RTD_start(){
     if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return; 
-    if (!((ADC_Vars.FBPS >= FBPS_MIN) && (ADC_Vars.RBPS >= RBPS_MIN))) return;
+    if (!(ADC_Vars.FBPS >= BRAKES_THREASHOLD)) return;
     if (car_state.ready_to_drive) {
         canmsg.inverterEnable = 0; //to disable the inverter lockout if RTD is already active and you rebooted the CM200
     } else {
@@ -490,7 +498,7 @@ void process_CAN(CAN_msg cm){
         case MC_CANID_FAULTCODES:
             car_state.faults.bits = cm.data;
         case MC_CANID_ANALOGINVOLTAGES:
-            MC_Shutup(); //shuts the CM200 up in case it's been reset
+            MC_Init(); //shuts the CM200 up in case it's been reset
         break;
     }
 }
