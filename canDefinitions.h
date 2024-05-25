@@ -277,6 +277,15 @@ MC_CANSTRUCT {
 } MC_Command;
 
 MC_CANSTRUCT {
+    uint16_t parameterAdress;
+    uint8_t  readWrite;
+    uint8_t _RESERVED;
+    uint16_t Low;
+    uint16_t High;
+} MC_ParameterCommand;
+
+
+MC_CANSTRUCT {
     uint16_t wheelSpeed_FL;
     uint16_t wheelSpeed_FR;
     uint16_t wheelSpeed_BL;

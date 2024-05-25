@@ -15,32 +15,33 @@
 #define ROLLING_ADC_VALS  (ROLLING_ADC_FRAMES * 4)
 
 #define MIN_TORQUE_REQ      0 //do not change this. car not legally allowed to go backwards.
-#define MAX_TORQUE_REQ      79
+#define MAX_TORQUE_REQ      2200
 
-#define BRAKES_THREASHOLD   500 //change this in the future
+#define BRAKES_THREASHOLD   420 //change this in the future
 
 #define CONSTINV(n)             (1.0f / (float)(n)) //TODO: change all of the devisors to precomputed const values
 #define REMAP0_1(n, min, max)   ((float)(n - min) * CONSTINV(max - min))
 #define REMAPm_M(n, min, max)   ((n) * (max - min) + (min))
 #define FABS(x)                 ((x) > 0.0f ? (x) : -(x))
 
-const uint32_t APPS1_MIN    = 447;
-const uint32_t APPS1_MAX    = 1860;
-const uint32_t APPS2_MIN    = 1880;
-const uint32_t APPS2_MAX    = 3240;
+const uint32_t APPS1_MIN    = 730;  
+const uint32_t APPS1_MAX    = 1450;
+const uint32_t APPS2_MIN    = 2745;
+const uint32_t APPS2_MAX    = 3430;
 const uint32_t FBPS_MIN     = 0;
 const uint32_t FBPS_MAX     = 4092;
 const uint32_t RBPS_MIN     = 0;
 const uint32_t RBPS_MAX     = 4092;
 
 //these values enable apps min and max to both be slightly inside pedal travel to produce a sort of "deadzone" effect.
-const float SENSOR_MIN = -0.10f;
-const float SENSOR_MAX =  1.10f;
+const float SENSOR_MIN = -0.15f;
+const float SENSOR_MAX =  1.15f;
 
 const uint16_t controlReset = 5,  //how many milliseconds between control loop
                inputReset = 50,   //how many milliseconds between input parses
                recieveReset = 20, //how many milliseconds between can processes
                diagReset = 100;   //how many milliseconds between diagnostic can sends
+               faultClearReset = 1000; //how many milliseconds between fault clear can messages
 
 struct __attribute__((packed)) {
     volatile uint16_t APPS2;
@@ -55,8 +56,8 @@ struct {
     volatile uint16_t ready_to_drive;
     volatile uint16_t torque_req;
     uint32_t buzzerTimer;
-    uint16_t controlTimer, inputTimer, recieveTimer, diagTimer;
-    uint8_t controlQue, inputQue, recieveQue, diagQue;
+    uint16_t controlTimer, inputTimer, recieveTimer, diagTimer, faultClearTimer;
+    uint8_t controlQue, inputQue, recieveQue, diagQue, faultClearQueue;
     uint16_t lastAPPSFault;
     struct{
         uint16_t apps1, apps2, torque, fault;
@@ -73,6 +74,10 @@ struct {
         DL_CarAcceleration ca;
         uint32_t bits;
     } acceleration;
+    union {
+        MC_FaultCodes fc;
+        uint64_t bits;
+    } faults;
 } car_state;
 
 typedef struct _canmsg{
@@ -95,6 +100,8 @@ void CAN_Init();
 
 void default_handler();
 void Control();
+void Fault_Clear();
+void MC_Shutup();
 void Input();
 void send_Diagnostics();
 
@@ -133,7 +140,9 @@ uint32_t __aeabi_uidiv(uint32_t u, uint32_t v) {
 
 //what gets sent to the motor controller
 MC_Command canmsg = {0, 0, 1, 0, 0, 0, 0, 0};
-
+MC_ParameterCommand faultClearMsg = {20, 1, 0, 0, 0};
+//MC_ParameterCommand shutup = {148, 1, 0, 0b0001110011100111, 0xFFFF};
+MC_ParameterCommand shutup = {148, 1, 0, 0b1110011100111000, 0xFFFF};
 int main(){
     //setup
     clock_init();
@@ -148,6 +157,7 @@ int main(){
     car_state.recieveTimer = 0;  
     car_state.buzzerTimer = 0;
     car_state.diagTimer = 0;
+    car_state.faultClearTimer = 0;
     
     GPIO_Init(); //must be called first
 
@@ -157,12 +167,14 @@ int main(){
     SysTick_Config(48000); // 48MHZ / 48000 = 1 tick every ms
     __enable_irq(); //enable interrupts
    
+    MC_Shutup();
     //non rt program bits
     for(;;){
-        if(car_state.controlQue) Control();
-        if(car_state.inputQue)   Input();
-        if(car_state.recieveQue) recieve_CAN();
-        if(car_state.diagQue)    send_Diagnostics();
+        if(car_state.controlQue)      Control();
+        if(car_state.inputQue)        Input();
+        if(car_state.recieveQue)      recieve_CAN();
+        if(car_state.diagQue)         send_Diagnostics();
+        if(car_state.faultClearQueue) Fault_Clear();
     }
 }
 
@@ -193,8 +205,8 @@ void systick_handler()
     car_state.controlTimer--;
     car_state.recieveTimer--;
     car_state.inputTimer--;
-    //car_state.buzzerTimer--;
     car_state.diagTimer--;
+    car_state.faultClearTimer--;
 }
 
 void Control() {
@@ -207,8 +219,20 @@ void Control() {
     send_CAN(MC_CANID_COMMAND, 8, (uint8_t*)&canmsg);        
     
     canmsg.inverterEnable = car_state.ready_to_drive;
+    
     GPIOB->ODR |= (car_state.ready_to_drive > 0) << 7;
     GPIOB->ODR &= ~((car_state.ready_to_drive == 0) << 7);
+}
+
+void Fault_Clear(){
+    car_state.faultClearQueue = 0;
+    if(car_state.faults.fc.runtimeErrors & (1 << 10)){ //if there's an undervoltage fault
+        send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t*)&faultClearMsg);
+    }
+}
+
+void MC_Shutup(){
+    send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&shutup);
 }
 
 void Input(){
@@ -224,16 +248,17 @@ void send_Diagnostics(){
     send_CAN(VCU_CANID_CALIBRATION, 8, (uint8_t *)&car_state.APPSCalib.apps1);
 }
 
+//TODO: brakes for RTD
 void RTD_start(){
-    if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return;
+    if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return; 
+    if (!((ADC_Vars.FBPS >= FBPS_MIN) && (ADC_Vars.RBPS >= RBPS_MIN))) return;
     if (car_state.ready_to_drive) {
-        canmsg.inverterEnable = 0;
+        canmsg.inverterEnable = 0; //to disable the inverter lockout if RTD is already active and you rebooted the CM200
     } else {
         car_state.buzzerTimer = 3000; //buzzer timer in ms
         GPIOB->ODR |= GPIO_ODR_5; //buzzer
         car_state.ready_to_drive = 1;
     }
-    
 }
 
 void clock_init() //turns on hsi48 and sets as system clock
@@ -462,6 +487,10 @@ void process_CAN(CAN_msg cm){
     switch (cm.id){
         case MC_CANID_HIGHSPEEDMESSAGE:
             car_state.hsmessage.bits = cm.data;
+        case MC_CANID_FAULTCODES:
+            car_state.faults.bits = cm.data;
+        case MC_CANID_ANALOGINVOLTAGES:
+            MC_Shutup(); //shuts the CM200 up in case it's been reset
         break;
     }
 }
