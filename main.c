@@ -17,25 +17,25 @@
 #define MIN_TORQUE_REQ      0 //do not change this. car not legally allowed to go backwards.
 #define MAX_TORQUE_REQ      1500
 
-#define BRAKES_THREASHOLD   500 //change this in the future
+#define BRAKES_THREASHOLD   450 //change this in the future
 
 #define CONSTINV(n)             (1.0f / (float)(n)) //TODO: change all of the devisors to precomputed const values
 #define REMAP0_1(n, min, max)   ((float)(n - min) * CONSTINV(max - min))
 #define REMAPm_M(n, min, max)   ((n) * (max - min) + (min))
 #define FABS(x)                 ((x) > 0.0f ? (x) : -(x))
 
-const uint32_t APPS1_MIN    = 730;  
-const uint32_t APPS1_MAX    = 1450;
-const uint32_t APPS2_MIN    = 2745;
-const uint32_t APPS2_MAX    = 3430;
+const uint32_t APPS1_MIN    = 1130;  
+const uint32_t APPS1_MAX    = 1996;
+const uint32_t APPS2_MIN    = 1823;
+const uint32_t APPS2_MAX    = 2700;
 const uint32_t FBPS_MIN     = 0;
 const uint32_t FBPS_MAX     = 4092;
 const uint32_t RBPS_MIN     = 0;
 const uint32_t RBPS_MAX     = 4092;
 
 //these values enable apps min and max to both be slightly inside pedal travel to produce a sort of "deadzone" effect.
-const float SENSOR_MIN = -0.15f;
-const float SENSOR_MAX =  1.15f;
+const float SENSOR_MIN = -0.10f;
+const float SENSOR_MAX =  1.25f;
 
 const uint16_t controlReset = 5,  //how many milliseconds between control loop
                inputReset = 50,   //how many milliseconds between input parses
@@ -57,7 +57,7 @@ struct {
     volatile uint16_t torque_req;
     uint32_t buzzerTimer;
     uint16_t controlTimer, inputTimer, recieveTimer, diagTimer, faultClearTimer;
-    uint8_t controlQue, inputQue, recieveQue, diagQue, faultClearQueue;
+    uint8_t controlQue, inputQue, recieveQue, diagQue, faultClearQueue, canQueue;
     uint16_t lastAPPSFault;
     struct{
         uint16_t apps1, apps2, torque, fault;
@@ -78,6 +78,10 @@ struct {
         MC_FaultCodes fc;
         uint64_t bits;
     } faults;
+    union {
+        MC_InternalStates st;
+        uint64_t bits;
+    } MCstates;
 } car_state;
 
 typedef struct _canmsg{
@@ -142,7 +146,7 @@ uint32_t __aeabi_uidiv(uint32_t u, uint32_t v) {
 MC_Command canmsg = {0, 0, 1, 0, 0, 0, 0, 0};
 MC_ParameterCommand faultClearMsg = {20, 1, 0, 0, 0};
 MC_ParameterCommand shutup = {148, 1, 0, 0b0001110011100111, 0xFFFF};
-//MC_ParameterCommand shutup = {148, 1, 0, 0b1110011100111000, 0xFFFF};
+//MC_ParameterCommand fastMsg = {227, 1, 0, 0xFFFE, 0}; //turn on high speed message
 MC_ParameterCommand torqueLimitMsg = {129, 1, 0, MAX_TORQUE_REQ, 0};
 MC_ParameterCommand cmdTimeoutMsg = {146, 1, 0, 1, 0};
 
@@ -227,21 +231,25 @@ void Control() {
     
     canmsg.inverterEnable = car_state.ready_to_drive;
     
-    GPIOB->ODR |= (car_state.ready_to_drive > 0) << 7;
-    GPIOB->ODR &= ~((car_state.ready_to_drive == 0) << 7);
+    if(car_state.MCstates.st.vsmState == 6){ //only turn on RTD led when the wheels are ready to spin
+        GPIOA->ODR |= (car_state.ready_to_drive > 0) << 9;
+    } else {
+        GPIOA->ODR &= ~GPIO_ODR_9;
+    }
 }
 
 void Fault_Clear(){
     car_state.faultClearQueue = 0;
-    if(car_state.faults.fc.runtimeErrors & (1 << 10)){ //if there's an undervoltage fault
+    if(car_state.faults.fc.postErrors & (1 << 21)){ //if there's an undervoltage fault
         send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t*)&faultClearMsg);
     }
 }
 
 void MC_Init(){
     send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&shutup);
-    send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&torqueLimitMsg);
-    send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&cmdTimeoutMsg);
+    //send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&fastMsg);
+    //send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&torqueLimitMsg);
+    //send_CAN(MC_CANID_PARAMCOM, 8, (uint8_t *)&cmdTimeoutMsg);
 }
 
 void Input(){
@@ -260,10 +268,11 @@ void send_Diagnostics(){
 void RTD_start(){
     if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return; 
     if (!(ADC_Vars.FBPS >= BRAKES_THREASHOLD)) return;
+    if(car_state.faults.bits) return;
     if (car_state.ready_to_drive) {
         canmsg.inverterEnable = 0; //to disable the inverter lockout if RTD is already active and you rebooted the CM200
     } else {
-        car_state.buzzerTimer = 3000; //buzzer timer in ms
+        car_state.buzzerTimer = 1500; //buzzer timer in ms
         GPIOB->ODR |= GPIO_ODR_5; //buzzer
         car_state.ready_to_drive = 1;
     }
@@ -499,6 +508,10 @@ void process_CAN(CAN_msg cm){
             car_state.faults.bits = cm.data;
         case MC_CANID_ANALOGINVOLTAGES:
             MC_Init(); //shuts the CM200 up in case it's been reset
+        case MC_CANID_INTERNALSTATES:
+            car_state.MCstates.bits = cm.data;
+        case MC_CANID_PARAMREQ:
+            car_state.canQueue = 1;
         break;
     }
 }
