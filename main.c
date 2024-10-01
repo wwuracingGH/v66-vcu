@@ -15,7 +15,7 @@
 #define ROLLING_ADC_VALS  (ROLLING_ADC_FRAMES * 4)
 
 #define MIN_TORQUE_REQ      0 //do not change this. car not legally allowed to go backwards.
-#define MAX_TORQUE_REQ      1500
+#define MAX_TORQUE_REQ      1000
 
 #define BRAKES_THREASHOLD   450 //change this in the future
 
@@ -24,17 +24,17 @@
 #define REMAPm_M(n, min, max)   ((n) * (max - min) + (min))
 #define FABS(x)                 ((x) > 0.0f ? (x) : -(x))
 
-const uint32_t APPS1_MIN    = 1130;  
-const uint32_t APPS1_MAX    = 1996;
-const uint32_t APPS2_MIN    = 1823;
-const uint32_t APPS2_MAX    = 2700;
+const uint32_t APPS1_MIN    = 1193;  
+const uint32_t APPS1_MAX    = 1910;
+const uint32_t APPS2_MIN    = 1810;
+const uint32_t APPS2_MAX    = 2511;
 const uint32_t FBPS_MIN     = 0;
 const uint32_t FBPS_MAX     = 4092;
 const uint32_t RBPS_MIN     = 0;
 const uint32_t RBPS_MAX     = 4092;
 
 //these values enable apps min and max to both be slightly inside pedal travel to produce a sort of "deadzone" effect.
-const float SENSOR_MIN = -0.10f;
+const float SENSOR_MIN = -0.20f;
 const float SENSOR_MAX =  1.25f;
 
 const uint16_t controlReset = 5,  //how many milliseconds between control loop
@@ -57,7 +57,7 @@ struct {
     volatile uint16_t torque_req;
     uint32_t buzzerTimer;
     uint16_t controlTimer, inputTimer, recieveTimer, diagTimer, faultClearTimer;
-    uint8_t controlQue, inputQue, recieveQue, diagQue, faultClearQueue, canQueue;
+    uint8_t controlQue, inputQue, recieveQue, diagQue, faultClearQueue;
     uint16_t lastAPPSFault;
     struct{
         uint16_t apps1, apps2, torque, fault;
@@ -510,8 +510,6 @@ void process_CAN(CAN_msg cm){
             MC_Init(); //shuts the CM200 up in case it's been reset
         case MC_CANID_INTERNALSTATES:
             car_state.MCstates.bits = cm.data;
-        case MC_CANID_PARAMREQ:
-            car_state.canQueue = 1;
         break;
     }
 }
