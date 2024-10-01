@@ -159,11 +159,11 @@ int main(){
     }
 
     car_state.ready_to_drive = 0;
-    car_state.controlTimer = 0;
-    car_state.inputTimer = 0;
-    car_state.recieveTimer = 0;  
+    car_state.controlTimer = 1;
+    car_state.inputTimer = 201;
+    car_state.recieveTimer = 3;  
     car_state.buzzerTimer = 0;
-    car_state.diagTimer = 0;
+    car_state.diagTimer = 5;
     car_state.faultClearTimer = 0;
     
     GPIO_Init(); //must be called first
@@ -174,7 +174,10 @@ int main(){
     SysTick_Config(48000); // 48MHZ / 48000 = 1 tick every ms
     __enable_irq(); //enable interrupts
    
+
     MC_Init();
+
+    //for(int i = 0; i < 100000000; i++) i = i;
     //non rt program bits
     for(;;){
         if(car_state.controlQue)      Control();
@@ -269,6 +272,8 @@ void RTD_start(){
     if (!((ADC_Vars.APPS1 <= APPS1_MIN) && (ADC_Vars.APPS2 <= APPS2_MIN))) return; 
     if (!(ADC_Vars.FBPS >= BRAKES_THREASHOLD)) return;
     if(car_state.faults.bits) return;
+    static int i = 0;
+    if(i == 0) { send_CAN(0x07, 8, &ADC_Vars); i++;};
     if (car_state.ready_to_drive) {
         canmsg.inverterEnable = 0; //to disable the inverter lockout if RTD is already active and you rebooted the CM200
     } else {
