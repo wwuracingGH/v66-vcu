@@ -24,10 +24,10 @@
 #define REMAPm_M(n, min, max)   ((n) * (max - min) + (min))
 #define FABS(x)                 ((x) > 0.0f ? (x) : -(x))
 
-const uint32_t APPS1_MIN    = 1193;  
-const uint32_t APPS1_MAX    = 1910;
-const uint32_t APPS2_MIN    = 1810;
-const uint32_t APPS2_MAX    = 2511;
+const uint32_t APPS1_MIN    = 950;  
+const uint32_t APPS1_MAX    = 1990;
+const uint32_t APPS2_MIN    = 1644;
+const uint32_t APPS2_MAX    = 2670;
 const uint32_t FBPS_MIN     = 0;
 const uint32_t FBPS_MAX     = 4092;
 const uint32_t RBPS_MIN     = 0;
